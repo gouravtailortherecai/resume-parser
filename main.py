@@ -59,30 +59,48 @@ def extract_text_from_file(path: str, mime_type: Optional[str]) -> str:
     # fallback: try reading as text
     with open(path, "r", errors="ignore") as f:
         return f.read()
-
+    
 def call_groq_api(cv_text: str):
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
     }
+
     payload = {
-        "model": "openai/gpt-oss-120b",   # ✅ change if needed
+        "model": "openai/gpt-oss-120b",  # same as your Supabase config
         "messages": [
-            {"role": "system", "content": "You are a resume parser. Extract name, email, phone, skills, experience, education and return JSON only."},
+            {
+                "role": "system",
+                "content": (
+                    "You are a resume parser. "
+                    "Extract candidate details and return JSON with this schema:\n"
+                    "{\n"
+                    '  "name": string,\n'
+                    '  "email": string,\n'
+                    '  "phone": string,\n'
+                    '  "skills": [string],\n'
+                    '  "experience": [string],\n'
+                    '  "education": [string]\n'
+                    "}"
+                )
+            },
             {"role": "user", "content": cv_text}
         ],
         "temperature": 0.0,
-        "max_tokens": 1024
+        "max_tokens": 1024,
+        "response_format": {"type": "json_object"}  # ✅ Ensures JSON output
     }
+
     r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
     if not r.ok:
         raise HTTPException(status_code=r.status_code, detail=r.text)
+
     data = r.json()
     content = data.get("choices", [{}])[0].get("message", {}).get("content")
-    try:
-        return json.loads(content)
-    except Exception:
-        return {"raw": content}
+
+    # Since response_format=json_object, this should always be valid JSON
+    return json.loads(content)
+
 
 @app.post("/parse")
 def parse_resume(req: ParseRequest):
