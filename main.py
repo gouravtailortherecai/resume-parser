@@ -10,7 +10,6 @@ import docx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-import boto3  # only if you want to fetch service-account JSON from AWS Secrets Manager (not used here)
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
