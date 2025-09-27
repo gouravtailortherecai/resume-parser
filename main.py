@@ -66,19 +66,19 @@ def call_groq_api(cv_text: str):
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "mixtral-8x7b-32768",
+        "model": "gpt-oss-120b",   # ✅ change if needed
         "messages": [
             {"role": "system", "content": "You are a resume parser. Extract name, email, phone, skills, experience, education and return JSON only."},
             {"role": "user", "content": cv_text}
         ],
-        "temperature": 0.0
+        "temperature": 0.0,
+        "max_tokens": 1024
     }
     r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
-    r.raise_for_status()
+    if not r.ok:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
     data = r.json()
-    # The Groq response normally contains the assistant message in choices[0].message.content
     content = data.get("choices", [{}])[0].get("message", {}).get("content")
-    # try to parse JSON if Groq returned JSON text
     try:
         return json.loads(content)
     except Exception:
