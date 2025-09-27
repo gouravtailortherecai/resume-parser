@@ -66,7 +66,7 @@ def call_groq_api(cv_text: str):
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "gpt-oss-120b",   # ✅ change if needed
+        "model": "llama-3.1-70b-versatile",   # ✅ change if needed
         "messages": [
             {"role": "system", "content": "You are a resume parser. Extract name, email, phone, skills, experience, education and return JSON only."},
             {"role": "user", "content": cv_text}
