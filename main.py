@@ -37,28 +37,32 @@ class ParseRequest(BaseModel):
     fileId: str
     mimeType: Optional[str] = None
 
-def extract_text_from_pdf_file(path: str) -> str:
+def extract_text_from_pdf_bytes(data: bytes) -> str:
     text = ""
-    with pdfplumber.open(path) as pdf:
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
         for p in pdf.pages:
             text += p.extract_text() or ""
     return text.strip()
 
-def extract_text_from_docx_file(path: str) -> str:
-    doc = docx.Document(path)
+def extract_text_from_docx_bytes(data: bytes) -> str:
+    doc = docx.Document(io.BytesIO(data))
     return "\n".join([p.text for p in doc.paragraphs if p.text]).strip()
 
-def extract_text_from_file(path: str, mime_type: Optional[str]) -> str:
-    if mime_type == "application/pdf" or path.lower().endswith(".pdf"):
-        return extract_text_from_pdf_file(path)
+def extract_text_from_bytes(data: bytes, mime_type: Optional[str]) -> str:
+    # PDF
+    if mime_type == "application/pdf":
+        return extract_text_from_pdf_bytes(data)
+    # DOCX
     if mime_type in (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
-    ) or path.lower().endswith(".docx") or path.lower().endswith(".doc"):
-        return extract_text_from_docx_file(path)
-    # fallback: try reading as text
-    with open(path, "r", errors="ignore") as f:
-        return f.read()
+    ):
+        return extract_text_from_docx_bytes(data)
+    # Fallback: try reading as text
+    try:
+        return data.decode(errors="ignore")
+    except Exception:
+        return ""
     
 async def call_groq_api(cv_text: str, timeout: float = 30.0):
     headers = {
@@ -111,7 +115,6 @@ async def parse_resume(req: ParseRequest, request: Request):
     # API timeout (seconds)
     api_timeout = float(request.headers.get("X-API-Timeout", 30.0))
 
-    tmp_path = None
     try:
         # Download file from Google Drive (blocking, but Google API is not async)
         request_drive = DRIVE_SERVICE.files().get_media(fileId=file_id)
@@ -122,12 +125,8 @@ async def parse_resume(req: ParseRequest, request: Request):
             status, done = downloader.next_chunk()
         fh.seek(0)
 
-        suffix = ".pdf" if (mime_type == "application/pdf") else (".docx" if (mime_type and "word" in mime_type) else "")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(fh.read())
-            tmp_path = tmp.name
-
-        cv_text = extract_text_from_file(tmp_path, mime_type)
+        file_bytes = fh.read()
+        cv_text = extract_text_from_bytes(file_bytes, mime_type)
         if not cv_text.strip():
             raise HTTPException(status_code=400, detail="Could not extract text from file")
 
@@ -136,10 +135,3 @@ async def parse_resume(req: ParseRequest, request: Request):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # Clean up temp file
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
