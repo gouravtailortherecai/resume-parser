@@ -4,10 +4,10 @@ import io
 import tempfile
 from typing import Optional
 
-import requests
+import httpx
 import pdfplumber
 import docx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from google.oauth2 import service_account
@@ -60,7 +60,7 @@ def extract_text_from_file(path: str, mime_type: Optional[str]) -> str:
     with open(path, "r", errors="ignore") as f:
         return f.read()
     
-def call_groq_api(cv_text: str):
+async def call_groq_api(cv_text: str, timeout: float = 30.0):
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
@@ -91,29 +91,32 @@ def call_groq_api(cv_text: str):
         "response_format": {"type": "json_object"}  # ✅ Ensures JSON output
     }
 
-    r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=60)
-    if not r.ok:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
-    data = r.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content")
-
-    # Since response_format=json_object, this should always be valid JSON
-    return json.loads(content)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        r = await client.post(GROQ_API_URL, headers=headers, json=payload)
+        if r.status_code != 200:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+        data = r.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content")
+        return json.loads(content)
 
 
 @app.post("/parse")
-def parse_resume(req: ParseRequest):
+async def parse_resume(req: ParseRequest, request: Request):
     file_id = req.fileId
     mime_type = req.mimeType
 
     if not file_id:
         raise HTTPException(status_code=400, detail="fileId required")
 
+    # API timeout (seconds)
+    api_timeout = float(request.headers.get("X-API-Timeout", 30.0))
+
+    tmp_path = None
     try:
-        request = DRIVE_SERVICE.files().get_media(fileId=file_id)
+        # Download file from Google Drive (blocking, but Google API is not async)
+        request_drive = DRIVE_SERVICE.files().get_media(fileId=file_id)
         fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
+        downloader = MediaIoBaseDownload(fh, request_drive)
         done = False
         while not done:
             status, done = downloader.next_chunk()
@@ -128,8 +131,15 @@ def parse_resume(req: ParseRequest):
         if not cv_text.strip():
             raise HTTPException(status_code=400, detail="Could not extract text from file")
 
-        parsed = call_groq_api(cv_text)
+        parsed = await call_groq_api(cv_text, timeout=api_timeout)
         return {"message": "parsed", "fileId": file_id, "parsedData": parsed}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up temp file
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass

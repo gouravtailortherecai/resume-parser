@@ -23,4 +23,5 @@ COPY . /app
 
 # Expose port Render provides via $PORT
 ENV PORT 10000
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}
+# Use Gunicorn with Uvicorn workers for concurrency
+CMD gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:${PORT} --timeout 40

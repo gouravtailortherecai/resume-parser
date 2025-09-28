@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-requests
+httpx
 pdfplumber
 python-docx
 google-api-python-client
